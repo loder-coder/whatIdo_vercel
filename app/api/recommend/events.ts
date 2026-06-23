@@ -66,7 +66,10 @@ function normalizeServiceKey(serviceKey: string) {
 
 export async function getSeoulEvents(mode: string): Promise<SeoulEvent[]> {
   const serviceKey = process.env.SEOUL_OPEN_DATA_API_KEY;
-  if (!serviceKey) return [];
+  if (!serviceKey) {
+    console.info("[EVENT_API] count=0");
+    return [];
+  }
 
   try {
     const key = encodeURIComponent(normalizeServiceKey(serviceKey));
@@ -74,14 +77,17 @@ export async function getSeoulEvents(mode: string): Promise<SeoulEvent[]> {
       `${SEOUL_OPEN_DATA_EVENT_URL}/${key}/json/culturalEventInfo/1/1000/`,
       { cache: "no-store" },
     );
-    if (!response.ok) return [];
+    if (!response.ok) {
+      console.info("[EVENT_API] count=0");
+      return [];
+    }
 
     const payload = (await response.json()) as {
       culturalEventInfo?: { row?: SeoulEventRow[] };
     };
     const targetDates = getTargetDates(mode);
 
-    return (payload.culturalEventInfo?.row ?? [])
+    const events = (payload.culturalEventInfo?.row ?? [])
       .map((row): SeoulEvent | null => {
         const title = row.TITLE?.trim();
         const place = row.PLACE?.trim();
@@ -95,8 +101,11 @@ export async function getSeoulEvents(mode: string): Promise<SeoulEvent[]> {
       .filter((event) =>
         targetDates.some((date) => event.startDate <= date && event.endDate >= date),
       );
+    console.info(`[EVENT_API] count=${events.length}`);
+    return events;
   } catch (error) {
     console.error("Unable to load Seoul Open Data events", error);
+    console.info("[EVENT_API] count=0");
     return [];
   }
 }

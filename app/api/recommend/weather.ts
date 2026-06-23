@@ -1,4 +1,4 @@
-const DEFAULT_KMA_SHORT_FORECAST_URL =
+const KMA_SHORT_FORECAST_URL =
   "https://apis.data.go.kr/1360000/VilageFcstInfoService_2.0/getVilageFcst";
 
 const SEOUL_GRID_COORDINATES: Record<string, { nx: number; ny: number }> = {
@@ -139,9 +139,7 @@ export async function getShortForecast(
 
   const { nx, ny } = getSeoulGrid(location);
   const { baseDate, baseTime } = getForecastBaseDateTime();
-  const url = new URL(
-    process.env.KMA_SHORT_FORECAST_URL ?? DEFAULT_KMA_SHORT_FORECAST_URL,
-  );
+  const url = new URL(KMA_SHORT_FORECAST_URL);
   url.search = new URLSearchParams({
     serviceKey: normalizeServiceKey(serviceKey),
     pageNo: "1",
