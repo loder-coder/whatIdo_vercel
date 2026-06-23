@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { getSeoulEvents, type CulturalEvent } from "./events";
 import { getShortForecast, type ShortForecast } from "./weather";
 
 type RecommendRequest = {
@@ -6,24 +7,28 @@ type RecommendRequest = {
   mode?: unknown;
 };
 
-function createRecommendation(location: string, mode: string, weather: ShortForecast | null) {
-  if (!weather) {
-    return `${location}의 ${mode} 행사 정보를 바탕으로 전시, 공연, 실내 체험을 추천합니다.`;
-  }
+function isOutdoorEvent(event: CulturalEvent) {
+  return /야외|공원|광장|한강|거리|산책/.test(`${event.title} ${event.place}`);
+}
 
-  if (weather.precipitationType !== null && weather.precipitationType !== "0") {
-    return `${location}에는 강수 예보가 있어 전시, 공연, 실내 체험 같은 실내 활동을 추천합니다.`;
-  }
+function createRecommendations(events: CulturalEvent[], weather: ShortForecast | null) {
+  const precipitationExpected = weather?.precipitationType !== null && weather?.precipitationType !== "0";
+  const highPrecipitationProbability = (weather?.precipitationProbability ?? 0) >= 60;
+  const clearSky = weather?.sky === "1";
+  const weatherNote = precipitationExpected ? "강수 예보를 고려한 추천" : highPrecipitationProbability ? "높은 강수확률을 고려한 추천" : clearSky ? "맑은 날씨를 고려한 추천" : "행사 기간을 고려한 추천";
 
-  if ((weather.precipitationProbability ?? 0) >= 60) {
-    return `${location}의 강수확률이 높아 야외 행사보다 실내 전시와 공연을 우선 추천합니다.`;
-  }
-
-  if (weather.sky === "1") {
-    return `${location}은 맑은 예보라 공원 산책, 야외 행사, 플리마켓을 우선 추천합니다.`;
-  }
-
-  return `${location}의 날씨를 고려해 접근하기 좋은 행사와 문화 활동을 추천합니다.`;
+  return [...events]
+    .sort((first, second) => {
+      const score = (event: CulturalEvent) => {
+        const outdoor = isOutdoorEvent(event);
+        if ((precipitationExpected || highPrecipitationProbability) && outdoor) return -1;
+        if (clearSky && outdoor) return 1;
+        return 0;
+      };
+      return score(second) - score(first);
+    })
+    .slice(0, 10)
+    .map((event) => ({ title: event.title, period: event.period, place: event.place, reason: weatherNote }));
 }
 
 export async function POST(request: Request) {
@@ -45,12 +50,31 @@ export async function POST(request: Request) {
     );
   }
 
-  const weather = await getShortForecast(body.location);
+  let events: CulturalEvent[];
+  const weatherPromise = getShortForecast(body.location);
+  try {
+    events = await getSeoulEvents(body.mode);
+  } catch (error) {
+    console.error("Unable to load Culture Portal events", error);
+    return NextResponse.json(
+      { success: false, weather: await weatherPromise, events: [], recommendations: [], error: "Unable to load Culture Portal events." },
+      { status: 502 },
+    );
+  }
+
+  const weather = await weatherPromise;
+
+  if (events.length === 0) {
+    return NextResponse.json(
+      { success: false, weather, events: [], recommendations: [], error: "No Seoul events were found for the requested period." },
+      { status: 404 },
+    );
+  }
 
   return NextResponse.json({
     success: true,
-    location: body.location,
-    mode: body.mode,
-    recommendation: createRecommendation(body.location, body.mode, weather),
+    weather,
+    events: events.map(({ title, period, place }) => ({ title, period, place })),
+    recommendations: createRecommendations(events, weather),
   });
 }
