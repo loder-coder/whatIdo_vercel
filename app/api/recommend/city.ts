@@ -31,6 +31,23 @@ function getXmlValue(xml: string, tagName: string) {
   return xml.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, "i"))?.[1]?.trim() ?? "";
 }
 
+async function readUtf8Body(response: Response) {
+  return new TextDecoder("utf-8").decode(await response.arrayBuffer());
+}
+
+function repairMojibake(value: string) {
+  if (!/(?:ë|ì|í|ê|ã|Â|Ã)[\u0080-\u00BF]/.test(value)) return value;
+  if ([...value].some((character) => character.codePointAt(0)! > 0xff)) return value;
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(
+      Uint8Array.from(value, (character) => character.charCodeAt(0)),
+    );
+  } catch {
+    return value;
+  }
+}
+
 export async function getCityCongestion(): Promise<Congestion[]> {
   const serviceKey = process.env.SEOUL_CITY_DATA_API_KEY;
   if (!serviceKey) {
@@ -46,7 +63,7 @@ export async function getCityCongestion(): Promise<Congestion[]> {
   try {
     const response = await fetch(url, { cache: "no-store" });
     console.info(`[CITY_API] status=${response.status}`);
-    const responseBody = await response.text();
+    const responseBody = await readUtf8Body(response);
     console.info(`[CITY_API] body=${responseBody.slice(0, 500)}`);
 
     if (responseBody.trimStart().startsWith("<")) {
@@ -87,8 +104,8 @@ export async function getCityCongestion(): Promise<Congestion[]> {
     return rows
       .filter((row) => Boolean(row.AREA_NM && row.AREA_CONGEST_LVL))
       .map((row) => ({
-        area: row.AREA_NM as string,
-        level: row.AREA_CONGEST_LVL as string,
+        area: repairMojibake(row.AREA_NM as string),
+        level: repairMojibake(row.AREA_CONGEST_LVL as string),
         minPopulation: row.AREA_PPLTN_MIN ?? null,
         maxPopulation: row.AREA_PPLTN_MAX ?? null,
       }));

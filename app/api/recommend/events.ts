@@ -67,6 +67,23 @@ function getXmlValue(xml: string, tagName: string) {
   return xml.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, "i"))?.[1]?.trim() ?? "";
 }
 
+async function readUtf8Body(response: Response) {
+  return new TextDecoder("utf-8").decode(await response.arrayBuffer());
+}
+
+function repairMojibake(value: string) {
+  if (!/(?:ë|ì|í|ê|ã|Â|Ã)[\u0080-\u00BF]/.test(value)) return value;
+  if ([...value].some((character) => character.codePointAt(0)! > 0xff)) return value;
+
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(
+      Uint8Array.from(value, (character) => character.charCodeAt(0)),
+    );
+  } catch {
+    return value;
+  }
+}
+
 async function fetchEventPage(key: string, page: number): Promise<EventPage | null> {
   const start = (page - 1) * EVENT_PAGE_SIZE + 1;
   const end = page * EVENT_PAGE_SIZE;
@@ -76,7 +93,7 @@ async function fetchEventPage(key: string, page: number): Promise<EventPage | nu
   try {
     const response = await fetch(url, { cache: "no-store" });
     console.info(`[EVENT_API] page=${page} status=${response.status}`);
-    const responseBody = await response.text();
+    const responseBody = await readUtf8Body(response);
     console.info(`[EVENT_API] page=${page} body=${responseBody.slice(0, 500)}`);
     if (responseBody.trimStart().startsWith("<")) {
       const code = getXmlValue(responseBody, "CODE") || "unknown";
@@ -137,9 +154,9 @@ export async function getSeoulEvents(mode: string): Promise<SeoulEvent[]> {
       const periodDates = [...(row.DATE ?? "").matchAll(/20\d{2}[.\-/]?[01]\d[.\-/]?[0-3]\d/g)].map(([value]) => normalizeDate(value));
       const startDate = normalizeDate(row.STRTDATE) ?? periodDates[0] ?? null;
       const endDate = normalizeDate(row.END_DATE) ?? periodDates.at(-1) ?? startDate;
-      const title = row.TITLE?.trim();
-      const place = row.PLACE?.trim();
-      const period = row.DATE?.trim();
+      const title = row.TITLE ? repairMojibake(row.TITLE).trim() : undefined;
+      const place = row.PLACE ? repairMojibake(row.PLACE).trim() : undefined;
+      const period = row.DATE ? repairMojibake(row.DATE).trim() : undefined;
       return title && place && period && startDate && endDate ? { title, place, period, startDate, endDate } : null;
     })
     .filter((event): event is SeoulEvent => event !== null)
