@@ -1,11 +1,34 @@
-// Seoul Open Data's documented API gateway on port 8088 uses HTTP, not HTTPS.
 const SEOUL_CITY_DATA_URL = "http://openapi.seoul.go.kr:8088";
 
-type CityDataRow = { AREA_NM?: string; AREA_CONGEST_LVL?: string; AREA_PPLTN_MIN?: number; AREA_PPLTN_MAX?: number };
-export type Congestion = { area: string; level: string; minPopulation: number | null; maxPopulation: number | null };
+type CityDataRow = {
+  AREA_NM?: string;
+  AREA_CONGEST_LVL?: string;
+  AREA_PPLTN_MIN?: number;
+  AREA_PPLTN_MAX?: number;
+};
+
+type CityDataPayload = {
+  CITYDATA?: { row?: CityDataRow[] };
+  citydata?: { row?: CityDataRow[] };
+};
+
+export type Congestion = {
+  area: string;
+  level: string;
+  minPopulation: number | null;
+  maxPopulation: number | null;
+};
 
 function normalizeServiceKey(serviceKey: string) {
-  try { return decodeURIComponent(serviceKey); } catch { return serviceKey; }
+  try {
+    return decodeURIComponent(serviceKey);
+  } catch {
+    return serviceKey;
+  }
+}
+
+function getXmlValue(xml: string, tagName: string) {
+  return xml.match(new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, "i"))?.[1]?.trim() ?? "";
 }
 
 export async function getCityCongestion(): Promise<Congestion[]> {
@@ -25,15 +48,25 @@ export async function getCityCongestion(): Promise<Congestion[]> {
     console.info(`[CITY_API] status=${response.status}`);
     const responseBody = await response.text();
     console.info(`[CITY_API] body=${responseBody.slice(0, 500)}`);
+
+    if (responseBody.trimStart().startsWith("<")) {
+      const code = getXmlValue(responseBody, "CODE") || "unknown";
+      const message = getXmlValue(responseBody, "MESSAGE") || "unknown";
+      console.warn(`[CITY_API] xmlCode=${code} xmlMessage=${message}`);
+      console.info("[CITY_API] count=0");
+      return [];
+    }
+
     if (!response.ok) {
       console.info(`[CITY_API] reason=HTTP ${response.status}`);
       console.info("[CITY_API] count=0");
       return [];
     }
 
-    let payload: { CITYDATA?: { row?: CityDataRow[] }; citydata?: { row?: CityDataRow[] } };
-    try { payload = JSON.parse(responseBody) as typeof payload; }
-    catch (error) {
+    let payload: CityDataPayload;
+    try {
+      payload = JSON.parse(responseBody) as CityDataPayload;
+    } catch (error) {
       console.error("[CITY_API] reason=JSON parse failed", error);
       console.info("[CITY_API] count=0");
       return [];
@@ -45,9 +78,20 @@ export async function getCityCongestion(): Promise<Congestion[]> {
       console.info("[CITY_API] count=0");
       return [];
     }
-    if (rows.length === 0) console.info("[CITY_API] reason=no city congestion rows were returned");
+
     console.info(`[CITY_API] count=${rows.length}`);
-    return rows.filter((row) => Boolean(row.AREA_NM && row.AREA_CONGEST_LVL)).map((row) => ({ area: row.AREA_NM as string, level: row.AREA_CONGEST_LVL as string, minPopulation: row.AREA_PPLTN_MIN ?? null, maxPopulation: row.AREA_PPLTN_MAX ?? null }));
+    if (rows.length === 0) {
+      console.info("[CITY_API] reason=no city congestion rows were returned");
+    }
+
+    return rows
+      .filter((row) => Boolean(row.AREA_NM && row.AREA_CONGEST_LVL))
+      .map((row) => ({
+        area: row.AREA_NM as string,
+        level: row.AREA_CONGEST_LVL as string,
+        minPopulation: row.AREA_PPLTN_MIN ?? null,
+        maxPopulation: row.AREA_PPLTN_MAX ?? null,
+      }));
   } catch (error) {
     console.error("[CITY_API] reason=request failed", error);
     console.info("[CITY_API] count=0");

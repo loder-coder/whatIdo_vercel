@@ -131,6 +131,22 @@ function normalizeServiceKey(serviceKey: string) {
   }
 }
 
+function getPreviousForecastBaseDateTime(baseDate: string, baseTime: string) {
+  const date = new Date(
+    Date.UTC(
+      Number(baseDate.slice(0, 4)),
+      Number(baseDate.slice(4, 6)) - 1,
+      Number(baseDate.slice(6, 8)),
+      Number(baseTime.slice(0, 2)),
+    ),
+  );
+  date.setUTCHours(date.getUTCHours() - 3);
+  return {
+    baseDate: `${date.getUTCFullYear()}${String(date.getUTCMonth() + 1).padStart(2, "0")}${String(date.getUTCDate()).padStart(2, "0")}`,
+    baseTime: `${String(date.getUTCHours()).padStart(2, "0")}00`,
+  };
+}
+
 export async function getShortForecast(
   location: string,
 ): Promise<ShortForecast | null> {
@@ -138,44 +154,54 @@ export async function getShortForecast(
   if (!serviceKey) return null;
 
   const { nx, ny } = getSeoulGrid(location);
-  const { baseDate, baseTime } = getForecastBaseDateTime();
-  const url = new URL(KMA_SHORT_FORECAST_URL);
-  url.search = new URLSearchParams({
-    serviceKey: normalizeServiceKey(serviceKey),
-    pageNo: "1",
-    numOfRows: "1000",
-    dataType: "JSON",
-    base_date: baseDate,
-    base_time: baseTime,
-    nx: String(nx),
-    ny: String(ny),
-  }).toString();
+  let base = getForecastBaseDateTime();
 
-  try {
-    const response = await fetch(url, { cache: "no-store" });
-    if (!response.ok) throw new Error(`KMA request failed with ${response.status}`);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const url = new URL(KMA_SHORT_FORECAST_URL);
+    url.search = new URLSearchParams({
+      serviceKey: normalizeServiceKey(serviceKey),
+      pageNo: "1",
+      numOfRows: "1000",
+      dataType: "JSON",
+      base_date: base.baseDate,
+      base_time: base.baseTime,
+      nx: String(nx),
+      ny: String(ny),
+    }).toString();
 
-    const payload = (await response.json()) as {
-      response?: { body?: { items?: { item?: ForecastItem[] } } };
-    };
-    const items = payload.response?.body?.items?.item;
-    if (!Array.isArray(items)) throw new Error("KMA response has no forecast items");
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) throw new Error(`KMA request failed with ${response.status}`);
 
-    const selectedItems = selectForecastItems(items);
-    const values = Object.fromEntries(
-      selectedItems
-        .filter((item) => item.category && FORECAST_CATEGORIES.includes(item.category as ForecastCategory))
-        .map((item) => [item.category as ForecastCategory, item.fcstValue]),
-    );
+      const payload = (await response.json()) as {
+        response?: { body?: { items?: { item?: ForecastItem[] } } };
+      };
+      const items = payload.response?.body?.items?.item;
+      if (Array.isArray(items) && items.length > 0) {
+        const selectedItems = selectForecastItems(items);
+        const values = Object.fromEntries(
+          selectedItems
+            .filter((item) => item.category && FORECAST_CATEGORIES.includes(item.category as ForecastCategory))
+            .map((item) => [item.category as ForecastCategory, item.fcstValue]),
+        );
 
-    return {
-      temperature: values.TMP ? Number(values.TMP) : null,
-      precipitationProbability: values.POP ? Number(values.POP) : null,
-      sky: values.SKY ?? null,
-      precipitationType: values.PTY ?? null,
-    };
-  } catch (error) {
-    console.error("Unable to load KMA short forecast", error);
-    return null;
+        return {
+          temperature: values.TMP ? Number(values.TMP) : null,
+          precipitationProbability: values.POP ? Number(values.POP) : null,
+          sky: values.SKY ?? null,
+          precipitationType: values.PTY ?? null,
+        };
+      }
+      console.warn(`[KMA_API] reason=empty items baseDate=${base.baseDate} baseTime=${base.baseTime}`);
+    } catch (error) {
+      console.error(`[KMA_API] reason=request failed baseDate=${base.baseDate} baseTime=${base.baseTime}`, error);
+    }
+
+    if (attempt === 0) {
+      base = getPreviousForecastBaseDateTime(base.baseDate, base.baseTime);
+      console.info(`[KMA_API] retryBaseDate=${base.baseDate} retryBaseTime=${base.baseTime}`);
+    }
   }
+
+  return null;
 }
