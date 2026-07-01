@@ -192,17 +192,28 @@ export async function getSeoulEvents(mode: string, location: string): Promise<Se
     .filter((event): event is SeoulEvent => event !== null)
     .filter((event) => targetDates.some((date) => event.startDate <= date && event.endDate >= date))
     .filter((event) => {
+      // district가 있으면 district 매칭 우선
       if (resolvedLocation.district) {
         return (
           event.district === resolvedLocation.district ||
           `${event.title} ${event.place}`.includes(resolvedLocation.district)
         );
       }
-      if (event.latitude == null || event.longitude == null) return false;
-      return distanceInKilometers(resolvedLocation, {
-        latitude: event.latitude,
-        longitude: event.longitude,
-      }) <= EVENT_RADIUS_KILOMETERS;
+      // 이벤트에 좌표가 있으면 반경으로 판단
+      if (event.latitude != null && event.longitude != null) {
+        return (
+          distanceInKilometers(resolvedLocation, {
+            latitude: event.latitude,
+            longitude: event.longitude,
+          }) <= EVENT_RADIUS_KILOMETERS
+        );
+      }
+      // 이벤트에 좌표가 없으면 district로 폴백 (district가 있는 이벤트만 포함)
+      if (event.district) {
+        return true; // district 정보가 있는 이벤트는 일단 포함
+      }
+      // 좌표도 district도 없으면 제외
+      return false;
     });
 
   if (events.length === 0) {
